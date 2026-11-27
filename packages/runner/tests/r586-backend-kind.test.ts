@@ -787,6 +787,46 @@ describe("R586 C1: runSession keys on kind, not on authoritative", () => {
     });
   });
 
+  test("isolation bc goes in the lending build (before the environment tag) and the fingerprint, apart from test", async () => {
+    await inProject(async (root) => {
+      const store = new ResultsStore(":memory:");
+      const withEnv = (bc: boolean) =>
+        Object.assign(withProbe(new V3KindStub([]), []), {
+          environmentChoice: { value: "onprem" as const, source: "config" as const },
+          ...(bc ? { bcIsolation: true } : {}),
+        });
+      await v3Session(root, store, withEnv(false));
+      await v3Session(root, store, withEnv(true));
+      const [a, b] = [store.getRun(1), store.getRun(2)];
+      expect(a?.runnerBuild).not.toContain("isolation-bc");
+      expect(b?.runnerBuild).toContain(" isolation-bc environment-onprem");
+      expect((b?.runnerBuild ?? "").replace(" isolation-bc", "")).toBe(a?.runnerBuild ?? "");
+      expect(b?.configFingerprint).not.toBe(a?.configFingerprint);
+    });
+  });
+
+  test("an unfinished bc run is not lent to a test session on the same build, nor the other way round", async () => {
+    await inProject(async (root) => {
+      const store = new ResultsStore(":memory:");
+      const mk = (bc: boolean, env: "saas" | "onprem") =>
+        Object.assign(withProbe(new V3KindStub([]), []), {
+          environmentChoice: { value: env, source: "config" as const },
+          ...(bc ? { bcIsolation: true } : {}),
+        });
+      await v3Session(root, store, mk(true, "onprem"));
+      store.db.run("UPDATE runs SET finished_at = NULL WHERE id = 1");
+      // The environment differs: the refusal names the run only for a same-mode session, so a test session is not matched.
+      const testSession = await v3Session(root, store, mk(false, "saas"), {
+        resume: "last",
+      }).catch((e: unknown) => e);
+      expect(String(testSession)).not.toContain("recorded under environment");
+      const bcSession = await v3Session(root, store, mk(true, "saas"), { resume: "last" }).catch(
+        (e: unknown) => e,
+      );
+      expect(String(bcSession)).toContain("recorded under environment onprem");
+    });
+  });
+
   test("a v3 backend that cannot name its build is refused (its run would lend under none)", async () => {
     await inProject(async (root) => {
       const store = new ResultsStore(":memory:");

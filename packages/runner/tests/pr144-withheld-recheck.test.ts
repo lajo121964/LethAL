@@ -339,6 +339,7 @@ async function drive(
   fake: ReturnType<typeof fakeRunner>,
   backend: {
     methodIsolation?: boolean;
+    bcIsolation?: boolean;
     serveEntries?: boolean;
     closeDaemons?: () => Promise<void>;
   } = { serveEntries: true },
@@ -420,6 +421,18 @@ describe("runWithheldRecheck: the driver", () => {
     expect(fake.calls).toHaveLength(0);
     expect(emitted.map((e) => e.type)).toEqual(["warning"]);
     expect(summary.skipped).toContain("method");
+  });
+
+  test("isolation bc: skipped with a warning naming bc, nothing sent", async () => {
+    const fake = fakeRunner(() => nestedFor(["M1"]));
+    const { emitted, summary } = await drive(mainEvents([scored("M1")]), fake, {
+      bcIsolation: true,
+      serveEntries: true,
+    });
+    expect(fake.calls).toHaveLength(0);
+    expect(emitted).toMatchObject([{ type: "warning", code: "withheld-recheck-skipped" }]);
+    expect(summary.skipped).toContain('"bc"');
+    expect(summary.skipped).toContain("codeunit isolation");
   });
 
   test("one-shot transport: skipped with a warning, nothing sent", async () => {

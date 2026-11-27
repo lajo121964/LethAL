@@ -315,8 +315,10 @@ export class AlRunnerV3ReusedBaselineUnclassifiedError extends Error {
 }
 
 /** The four note tags (plan §4, §6), in `failureNote`; the gate and any count read them by tag. */
-/** The `testIsolation` every serve request sends (`requestBase`); leg O1 sends the same. */
+/** The `testIsolation` of a grouped serve request unless `alRunnerV3.isolation` is "bc" (see `groupedTestIsolation`); leg O1 sends the same. */
 export const SERVE_TEST_ISOLATION = "test";
+/** `alRunnerV3.isolation: "bc"`: the `testIsolation` every serve request sends (each codeunit under its own `RequiredTestIsolation`). */
+export const SERVE_REQUIRED_ISOLATION = "required";
 /** R1014: how often a running serve request looks for a stop signal (`send`). */
 export const STOP_SIGNAL_POLL_MS = 250;
 export const V3_STATE_NOTE_TAG = "[v3-codeunit-state-possible]";
@@ -790,6 +792,16 @@ export class AlRunnerV3IsolateTestsWithAutoRefusedError extends Error {
   }
 }
 
+/** `isolation: "bc"` with `--isolate-tests`: one mode names each test alone, the other runs each codeunit's tests together. */
+export class AlRunnerV3IsolateTestsWithBcRefusedError extends Error {
+  constructor() {
+    super(
+      'al-runner-v3-isolate-tests-with-bc-refused: --isolate-tests runs every test alone, while "alRunnerV3.isolation" is "bc", which runs each codeunit\'s tests together as Business Central does; the two cannot both hold.',
+    );
+    this.name = "AlRunnerV3IsolateTestsWithBcRefusedError";
+  }
+}
+
 /** R896: `V3_AUTO_METHOD_ONE_SHOT` is "refuse" and a codeunit was to move to "method" on one-shot. */
 export class AlRunnerV3AutoMethodOneShotRefusedError extends Error {
   constructor(codeunitId: number) {
@@ -1063,7 +1075,7 @@ export interface AlRunnerV3Config {
    * config section's default is R896's `"auto"`; this internal default stays `"test"`).
    * R896 `"auto"`: `"test"` until the orchestrator moves a codeunit to `"method"` (`chooseIsolation`).
    */
-  readonly isolation?: "auto" | "test" | "method";
+  readonly isolation?: "auto" | "test" | "method" | "bc";
   /**
    * R896: under `"auto"`, whether a codeunit may be moved to `"method"` on the one-shot transport.
    * Internal, not a config key. Absent: `V3_AUTO_METHOD_ONE_SHOT`.
@@ -1632,8 +1644,8 @@ export function v3CallArgv(a: {
   readonly testDir: string;
   /** R857: the one test to run alone (`Codeunit<ID>.<Method>`), in place of the whole codeunit. */
   readonly onlyTest?: string;
-  /** R890: `--isolation` value. Absent: `"test"`. */
-  readonly isolation?: "test" | "codeunit";
+  /** R890: `--isolation` value. Absent: `"test"`. `"required"`: `alRunnerV3.isolation: "bc"`. */
+  readonly isolation?: "test" | "codeunit" | "required";
   /** R907: `--skip-after-timeout`, right after the stop pair. Absent: not passed. */
   readonly skipAfterTimeout?: boolean;
   /** Fork: `alRunnerV3.extraArgs`, before the app folders. */
@@ -2379,7 +2391,7 @@ interface Daemon {
 
 /** R857, R890, R896: what one serve request (and its daemon) is sent under. */
 interface RequestMode {
-  readonly testIsolation: "test" | "codeunit";
+  readonly testIsolation: "test" | "codeunit" | "required";
   readonly runSelectedOnly: boolean;
 }
 
@@ -3009,10 +3021,20 @@ export class AlRunnerV3Backend implements ExecutionBackend {
   /** R896: the codeunits `chooseIsolation` fixed; every other codeunit is on `"test"` under auto. */
   private readonly chosen = new Map<number, "test" | "method">();
 
-  /** R896: codeunit `cu`'s mode: forced (`"method"`, else `"test"`), or under auto as chosen. */
+  /** R896: codeunit `cu`'s mode: forced (`"method"`, else `"test"`), or under auto as chosen. `"bc"` groups as `"test"`. */
   isolationOf(cu: number): "test" | "method" {
     if (this.methodIsolation) return "method";
     return this.chosen.get(cu) ?? "test";
+  }
+
+  /** `alRunnerV3.isolation: "bc"`: every request runs each codeunit under its own `RequiredTestIsolation`. See `ExecutionBackend.bcIsolation`. */
+  get bcIsolation(): boolean {
+    return this.cfg.isolation === "bc";
+  }
+
+  /** The `testIsolation` of a whole-codeunit (grouped) request: `"required"` under `"bc"`, else `"test"`. */
+  private groupedTestIsolation(): "test" | "required" {
+    return this.bcIsolation ? SERVE_REQUIRED_ISOLATION : SERVE_TEST_ISOLATION;
   }
 
   /** R912: see `ExecutionBackend.wholeCodeunit`: entries are used and `cu` is not per-test. */
@@ -3145,7 +3167,7 @@ export class AlRunnerV3Backend implements ExecutionBackend {
     const one = this.isolatedRefs.get(id);
     const cu = one?.codeunitId ?? this.baseCall(id);
     return {
-      testIsolation: this.isolationOf(cu) === "method" ? "codeunit" : SERVE_TEST_ISOLATION,
+      testIsolation: this.isolationOf(cu) === "method" ? "codeunit" : this.groupedTestIsolation(),
       runSelectedOnly: one !== undefined,
     };
   }
@@ -3749,6 +3771,9 @@ export class AlRunnerV3Backend implements ExecutionBackend {
     if (cfg.isolateTests === true && cfg.isolation === "auto") {
       throw new AlRunnerV3IsolateTestsWithAutoRefusedError();
     }
+    if (cfg.isolateTests === true && cfg.isolation === "bc") {
+      throw new AlRunnerV3IsolateTestsWithBcRefusedError();
+    }
     this.cfg = { ...cfg, alRunnerPath: resolveV3Binary(cfg.alRunnerPath) };
     if (typeof cfg.dotnetSidecar === "string") this.sidecarPath = resolve(cfg.dotnetSidecar); // R886
     this.speculateOn = cfg.speculateBaseline ?? readSpeculateBaseline();
@@ -4253,6 +4278,7 @@ export class AlRunnerV3Backend implements ExecutionBackend {
    */
   async decideTransport(facts: { readonly resume: boolean }): Promise<void> {
     await this.pickTransport(facts);
+    this.noteBcIsolation();
     if (!this.isolatesTests) return;
     if (!this.entries) {
       throw new AlRunnerV3IsolateTestsRefusedError(
@@ -4264,6 +4290,17 @@ export class AlRunnerV3Backend implements ExecutionBackend {
     this.notify(
       "al-runner-v3-isolate-tests",
       "[lethal] al-runner-v3-isolate-tests: every test of this run ran alone (--isolate-tests), one process per test at the baseline and one entry per test after it. Its verdicts are not comparable with a default run: a resume between the two is refused (R857).",
+    );
+  }
+
+  /** `isolation: "bc"`: one warning per session names the mode. */
+  private bcIsolationNoted = false;
+  private noteBcIsolation(): void {
+    if (!this.bcIsolation || this.bcIsolationNoted) return;
+    this.bcIsolationNoted = true;
+    this.notify(
+      "al-runner-v3-isolation-bc",
+      '[lethal] al-runner-v3-isolation-bc: "alRunnerV3.isolation" is "bc": each test codeunit runs under the isolation Business Central\'s test runner would use (testIsolation "required").',
     );
   }
 
@@ -5690,7 +5727,10 @@ export class AlRunnerV3Backend implements ExecutionBackend {
     this.baselineStats.batches = 0;
     this.baselineStats.batchDiscards = 0;
     this.baselineStats.orderHints = 0;
-    const mode: RequestMode = { testIsolation: SERVE_TEST_ISOLATION, runSelectedOnly: false };
+    const mode: RequestMode = {
+      testIsolation: this.groupedTestIsolation(),
+      runSelectedOnly: false,
+    };
     const answers = new Map<number, BaselineAnswer>();
     const shots = new Map<number, BaselineAnswer>(); // R951 (R3): fresh processes' answers in hand
     const comparedBefore = this.baselineStats.compared;
@@ -6626,7 +6666,11 @@ export class AlRunnerV3Backend implements ExecutionBackend {
       ...(o.onlyTest !== undefined ? { onlyTest: o.onlyTest } : {}),
       // R890, R896: per codeunit, so every caller (`callCodeunit`, `speculateBaseline`,
       // `fillIsolatedBaseline`) sends the mode its codeunit is on.
-      ...(this.isolationOf(o.id) === "method" ? { isolation: "codeunit" as const } : {}),
+      ...(this.isolationOf(o.id) === "method"
+        ? { isolation: "codeunit" as const }
+        : this.bcIsolation
+          ? { isolation: SERVE_REQUIRED_ISOLATION }
+          : {}),
       stopSeconds: o.stopSeconds,
       packagesDir: resolve(this.cfg.packagesDir),
       bcVersion: this.cfg.bcVersion,
@@ -8541,7 +8585,10 @@ export class AlRunnerV3Backend implements ExecutionBackend {
       rows.map((r) => ({ ...r, ...(r.message !== undefined ? { message: mask(r.message) } : {}) }));
     const none: V3CoverageRead = { kind: "unavailable", why: "PR-21 re-check rows only" };
     const stopSeconds = stopSecondsOf(timeoutMs);
-    const mode: RequestMode = { testIsolation: SERVE_TEST_ISOLATION, runSelectedOnly: false };
+    const mode: RequestMode = {
+      testIsolation: this.groupedTestIsolation(),
+      runSelectedOnly: false,
+    };
     const order = s.rows.map(([k]) => k);
     // R1123 (PR-146): without a coverage index (alRunnerV3.coverage "none") this session reads no coverage map: the
     // samples ask for none, no map is compared, and the re-check says so by name rather than passing null vs null.

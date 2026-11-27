@@ -327,6 +327,7 @@ export interface RecheckDeps {
   /** The backend's own facts, read after `decideTransport`. */
   readonly backend: {
     readonly methodIsolation?: boolean;
+    readonly bcIsolation?: boolean;
     readonly serveEntries?: boolean;
     readonly closeDaemons?: () => Promise<void>;
   };
@@ -402,6 +403,11 @@ export async function runWithheldRecheck(d: RecheckDeps): Promise<RecheckSummary
     return { targets: targets.length, recovered: 0, skipped: why };
   };
   if (d.backend.methodIsolation === true) return skip('isolation is already "method"');
+  if (d.backend.bcIsolation === true) {
+    return skip(
+      'isolation is "bc": a test alone under codeunit isolation is not how Business Central runs it',
+    );
+  }
   if (d.backend.serveEntries !== true) return skip("the transport is not serve-entries");
   const mainBaseline = mainBaselineOf(d.events);
   // A session with no baseline results at all: nothing proves what passed, so (e) could recover nothing.

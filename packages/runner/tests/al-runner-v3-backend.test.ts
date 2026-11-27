@@ -1848,14 +1848,19 @@ describe("R885: demo data, on the one-shot path", () => {
 
   test("R952 readProcessRssBytes: VmRSS in kB as bytes; unreadable or without the line, undefined", () => {
     const status = "Name:\tal-runner\nVmPeak:\t 999 kB\nVmRSS:\t 2048 kB\nThreads:\t9\n";
-    expect(readProcessRssBytes(42, (p) => (p === "/proc/42/status" ? status : ""))).toBe(
+    // bcmt Windows lanes: the platform is pinned so this /proc test also runs on Windows.
+    expect(readProcessRssBytes(42, (p) => (p === "/proc/42/status" ? status : ""), "linux")).toBe(
       2048 * 1024,
     );
-    expect(readProcessRssBytes(42, () => "Name:\tx\n")).toBeUndefined();
+    expect(readProcessRssBytes(42, () => "Name:\tx\n", "linux")).toBeUndefined();
     expect(
-      readProcessRssBytes(42, () => {
-        throw new Error("ENOENT");
-      }),
+      readProcessRssBytes(
+        42,
+        () => {
+          throw new Error("ENOENT");
+        },
+        "linux",
+      ),
     ).toBeUndefined();
   });
 

@@ -61,6 +61,13 @@ describe("R890, R896: alRunnerV3.isolation", () => {
         "al-runner-v3-config-refused",
       );
   });
+
+  test('"bc" is accepted; "other" is refused and the error lists the four values', () => {
+    expect(validateAlRunnerV3Config({ ...base, isolation: "bc" }).isolation).toBe("bc");
+    expect(() => validateAlRunnerV3Config({ ...base, isolation: "other" })).toThrow(
+      'must be "auto", "test", "method" or "bc", got "other"',
+    );
+  });
 });
 
 describe("R886: .gated and the manifest row", () => {

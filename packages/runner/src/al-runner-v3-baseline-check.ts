@@ -10,6 +10,7 @@
  */
 import { readFileSync, writeFileSync } from "node:fs";
 import type { V3CoverageRead } from "./al-runner-v3-sleep";
+import { readWin32WorkingSetBytes } from "./win32-process-memory";
 
 /** One call's answer, as far as the comparison reads it (a `V3Row` subset, so no import cycle). */
 export interface ComparableRow {
@@ -275,11 +276,16 @@ export function durationCouldMoveBudget(
 /**
  * R952 (R948): a process's resident memory in bytes (`VmRSS` of `/proc/<pid>/status`), or undefined
  * when it cannot be read (no /proc, a dead pid). `read` is injectable: tests never read `/proc`.
+ * bcmt Windows lanes: on `win32` there is no /proc, so the working set is read through kernel32
+ * (`readWin32WorkingSetBytes`); `platform` and `readWin32` are injectable so Linux never loads that binding.
  */
 export function readProcessRssBytes(
   pid: number,
   read: (path: string) => string = (p) => readFileSync(p, "utf8"),
+  platform: NodeJS.Platform = process.platform,
+  readWin32: (pid: number) => number | undefined = readWin32WorkingSetBytes,
 ): number | undefined {
+  if (platform === "win32") return readWin32(pid);
   try {
     const m = /^VmRSS:\s+(\d+)\s+kB$/m.exec(read(`/proc/${pid}/status`));
     return m?.[1] === undefined ? undefined : Number(m[1]) * 1024;

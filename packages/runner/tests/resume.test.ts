@@ -657,6 +657,14 @@ describe("sessionFingerprint (R47)", () => {
     );
   });
 
+  // alRunnerV3.isolation "bc": its verdicts come from grouped calls under required isolation.
+  test('isolation "bc" changes it, differently from "auto" and "method"', () => {
+    const bc = sessionFingerprint({ ...base, isolationBc: true });
+    expect(bc).not.toBe(sessionFingerprint(base));
+    expect(bc).not.toBe(sessionFingerprint({ ...base, isolationAuto: true }));
+    expect(bc).not.toBe(sessionFingerprint({ ...base, methodIsolation: true }));
+  });
+
   test("a different --only scope changes it", () => {
     expect(sessionFingerprint({ ...base, only: ["a/**"] })).not.toBe(
       sessionFingerprint({ ...base, only: ["b/**"] }),

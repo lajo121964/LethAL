@@ -452,6 +452,11 @@ export interface SessionFingerprintInput {
    * the run and compared at the resumed baseline). Only when on, so no other digest moves.
    */
   readonly isolationAuto?: true;
+  /**
+   * `alRunnerV3.isolation: "bc"`, the SETTING: its verdicts come from grouped calls under required
+   * isolation, so a "bc" run and a "test" run must not share a digest. Only when on, so no other digest moves.
+   */
+  readonly isolationBc?: true;
   /** R938: `--environment` al-runner v3 ran under. Only when stated, so no other digest moves. */
   readonly v3Environment?: "saas" | "onprem";
   /** R956: sha256 of `alRunnerV3.license`'s file: another license can give another verdict. Only when set, so no other digest moves. */
@@ -556,6 +561,7 @@ export function sessionFingerprint(input: SessionFingerprintInput): string {
     ...(input.noClient === true ? { noClient: true } : {}),
     ...(input.methodIsolation === true ? { methodIsolation: true } : {}),
     ...(input.isolationAuto === true ? { isolation: "auto" } : {}),
+    ...(input.isolationBc === true ? { isolation: "bc" } : {}),
     ...(input.v3Environment !== undefined ? { v3Environment: input.v3Environment } : {}),
     ...(input.v3License !== undefined ? { v3License: input.v3License } : {}),
     ...(input.v3Companies !== undefined ? { v3Companies: input.v3Companies } : {}), // PR-282

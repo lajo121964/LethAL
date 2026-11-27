@@ -7627,6 +7627,7 @@ async function runSessionBody(
     ...(cfg.backend.isolatesTests === true ? { isolateTests: true } : {}),
     ...(cfg.backend.noClient === true ? { noClient: true } : {}), // R907
     ...(cfg.backend.methodIsolation === true ? { methodIsolation: true } : {}),
+    ...(cfg.backend.bcIsolation === true ? { isolationBc: true } : {}),
     ...(cfg.backend.isolationAuto === true ? { isolationAuto: true } : {}), // R896
     ...(cfg.backend.environmentChoice !== undefined
       ? { v3Environment: cfg.backend.environmentChoice.value }
@@ -15337,7 +15338,7 @@ function assertSameResumeInputs(
 /**
  * The v3 session's `runner_build` lending key. ORDER MATTERS: `store.unfinishedRunUnderOtherEnvironment`
  * strips the end-anchored ` environment-X[ license-H][ companies-H][ refused-cut-tail][ stop-groups][ isolation-auto]`, and ` isolation-auto` must be
- * last (`runMayLend`). So the baseline-source tag goes BEFORE the environment tag.
+ * last (`runMayLend`). So the isolation (` isolation-method`, ` isolation-bc`) and baseline-source tags go BEFORE the environment tag.
  */
 export function lendingRunnerBuild(
   backend: ExecutionBackend,
@@ -15346,7 +15347,7 @@ export function lendingRunnerBuild(
   refusedCutTailAs?: boolean,
 ): string {
   const cutTail = refusedCutTailAs ?? backend.refusedCutTail === true;
-  return `${v3Build.version} ${v3Build.binarySha256}${backend.isolatesTests === true ? " isolate-tests" : ""}${backend.noClient === true ? " no-client" : ""}${backend.skipAfterTimeoutSupported === true ? " skip-after-timeout" : ""}${backend.methodIsolation === true ? " isolation-method" : ""}${baselineSourceTag(backend)}${backend.environmentChoice?.value !== undefined ? ` environment-${backend.environmentChoice.value}` : ""}${backend.license !== undefined ? ` license-${backend.license.sha256.slice(0, 8)}` : ""}${backend.companies !== undefined ? ` companies-${createHash("sha256").update(backend.companies).digest("hex").slice(0, 8)}` : ""}${cutTail ? " refused-cut-tail" : ""}${backend.stopGroups === true ? " stop-groups" : ""}${backend.isolationAuto === true ? ISOLATION_AUTO_BUILD_TAG : ""}`;
+  return `${v3Build.version} ${v3Build.binarySha256}${backend.isolatesTests === true ? " isolate-tests" : ""}${backend.noClient === true ? " no-client" : ""}${backend.skipAfterTimeoutSupported === true ? " skip-after-timeout" : ""}${backend.methodIsolation === true ? " isolation-method" : ""}${backend.bcIsolation === true ? " isolation-bc" : ""}${baselineSourceTag(backend)}${backend.environmentChoice?.value !== undefined ? ` environment-${backend.environmentChoice.value}` : ""}${backend.license !== undefined ? ` license-${backend.license.sha256.slice(0, 8)}` : ""}${backend.companies !== undefined ? ` companies-${createHash("sha256").update(backend.companies).digest("hex").slice(0, 8)}` : ""}${cutTail ? " refused-cut-tail" : ""}${backend.stopGroups === true ? " stop-groups" : ""}${backend.isolationAuto === true ? ISOLATION_AUTO_BUILD_TAG : ""}`;
 }
 
 /**

@@ -13295,3 +13295,172 @@ describe("PR-252: a request's wallMs is a monotonic interval", () => {
     });
   }
 });
+
+describe('bc isolation: each test codeunit as Business Central runs it (testIsolation "required")', () => {
+  const BC = { isolation: "bc" as const };
+  const isolationOf = (c: readonly string[]) => c[c.indexOf("--isolation") + 1];
+  const WARNING =
+    '"alRunnerV3.isolation" is "bc": each test codeunit runs under the isolation Business Central\'s test runner would use (testIsolation "required").';
+  /** CU's A hangs under M0001 (the request is cut, so the killer B runs alone). */
+  const hangsA: RowsFn = (m, cu, d, n) =>
+    m === "M0001" && cu === CU
+      ? [
+          { method: "A", status: "error", notRun: true, message: TIMEOUT_1S },
+          { method: "B", status: "pass" },
+        ]
+      : allPass(m, cu, d, n);
+  /** C of CU2 fails in every whole-codeunit call, daemon or fresh process (so the cross-check agrees). */
+  const failsGrouped: RowsFn = (m, cu, d, n) =>
+    allPass(m, cu, d, n).map((x) =>
+      cu === CU2 && x.method === "C"
+        ? { ...x, status: "fail" as const, message: "grouped boom" }
+        : x,
+    );
+  /** C of CU2 fails in a daemon's whole-codeunit call and passes in a fresh process. */
+  const failsInDaemon: RowsFn = (m, cu, d, n) =>
+    allPass(m, cu, d, n).map((x) =>
+      d >= 0 && cu === CU2 && x.method === "C"
+        ? { ...x, status: "fail" as const, message: "grouped boom" }
+        : x,
+    );
+
+  test("every serve request kind (baseline, warm-up, prefetch, live, alone) carries testIsolation required, and one-shot passes --isolation required", async () => {
+    const r = await dbRig({
+      extra: BC,
+      seams: { sleepRuleRetired: true },
+      serve: { rows: hangsA },
+    });
+    await baseline(r.b, SUITE3);
+    await r.b.prefetchMutants(plans(["M0001"], SUITE3));
+    await r.b.activate("M0001");
+    expect((await r.b.run(ref("B"), OPTS)).outcome).toBe("pass");
+    const asked = r.serve.requests;
+    expect(asked.length).toBeGreaterThan(3);
+    expect(asked.some((q) => q.body.coverage === true)).toBe(true); // the daemon baseline
+    expect(asked.some((q) => q.body.runSelectedOnly === true)).toBe(true); // an alone request
+    for (const q of asked) expect(q.body.testIsolation).toBe("required");
+    expect(r.one.calls.length).toBeGreaterThan(0);
+    for (const c of r.one.calls) expect(isolationOf(c)).toBe("required");
+  });
+
+  test("a mutant whose covering tests sit in one codeunit is ONE entry, Codeunit<id>., under required", async () => {
+    const r = await readyRig({ extra: BC, mutants: ["M0001"] });
+    const live = r.serve.requests.filter((q) =>
+      (q.body.entries as { resources: Record<string, string> }[]).some(
+        (e) => e.resources["active-mutant.txt"] === "M0001",
+      ),
+    );
+    expect(live.length).toBeGreaterThan(0);
+    for (const q of live) {
+      expect(q.body.testIsolation).toBe("required");
+      expect((q.body.entries as { test: string }[]).map((e) => e.test)).toEqual([
+        `Codeunit${ECHO}.`,
+        `Codeunit${CU}.`,
+      ]);
+    }
+  });
+
+  test("the mode is grouped as test: isolationOf test, whole codeunit, never auto; chooseIsolation is refused", async () => {
+    const r = await rig({ extra: BC });
+    expect([r.b.isolationAuto, r.b.isolatesTests, r.b.methodIsolation]).toEqual([
+      false,
+      false,
+      false,
+    ]);
+    expect(r.b.isolationOf(CU)).toBe("test");
+    expect(r.b.wholeCodeunit(CU)).toBe(true);
+    expect(() => r.b.chooseIsolation(CU, "method")).toThrow(/not "auto"/);
+  });
+
+  test("a codeunit that fails grouped is a baseline failure, as on BC, and is never moved to method", async () => {
+    const r = await dbRig({
+      extra: BC,
+      suite: SUITE3,
+      serve: { rows: failsGrouped },
+      oneShotRows: failsGrouped,
+    });
+    const v = await baseline(r.b, SUITE3);
+    expect(v.map((x) => x.outcome)).toEqual(["pass", "pass", "fail", "pass"]); // C failed, as on BC
+    expect(r.b.isolationOf(CU2)).toBe("test");
+    for (const q of r.serve.requests) {
+      expect(q.body.testIsolation).toBe("required");
+      expect(q.body.runSelectedOnly).toBeUndefined(); // no per-test request: no move to method
+    }
+  });
+
+  test("a cross-check mismatch (the daemon's answer vs a fresh process's, both grouped under required) drops the daemon baseline under bc, as under test", async () => {
+    const seen: [string, string][] = [];
+    const r = await dbRig({
+      extra: BC,
+      suite: SUITE3,
+      serve: { rows: failsInDaemon },
+      oneShotRows: allPass,
+      notify: (c, m) => seen.push([c, m]),
+    });
+    await baseline(r.b, SUITE3);
+    expect(r.b.daemonBaselineReport().dropped).toContain("differs from a fresh process's");
+    expect(dropNotice(seen).length).toBeGreaterThan(0);
+    expect(seen.map(([c]) => c)).not.toContain("al-runner-v3-bc-baseline-differs");
+    // The control: under test isolation the same mismatch drops the daemon baseline.
+    const control = await dbRig({
+      extra: { isolation: "test" },
+      suite: SUITE3,
+      serve: { rows: failsInDaemon },
+      oneShotRows: allPass,
+    });
+    await baseline(control.b, SUITE3);
+    expect(control.b.daemonBaselineReport().dropped).toContain("differs from a fresh process's");
+  });
+
+  test("PR-21 re-check of a reused baseline: every request the re-check sends carries testIsolation required", async () => {
+    const PUB = "Acme Pub";
+    const named = (serveRows: RowsFn) =>
+      rig({
+        appExtra: { publisher: PUB },
+        extra: { coverage: "al-runner", ...BC },
+        oneShotCoverage: plainCoverage,
+        serve: { rows: serveRows, coverage: plainCoverage },
+      });
+    const first = await named(allPass);
+    const verdicts = await baseline(first.b, SUITE1);
+    const stored = new Map(
+      verdicts.map((v) => [
+        `codeunit${v.ref.codeunitId}.${v.ref.method}`.toLowerCase(),
+        JSON.stringify(v.coverage ?? null),
+      ]),
+    );
+    const state = await first.b.baselineState();
+    const r2 = await named(allPass);
+    r2.b.baselinePhase(true);
+    const why = await r2.b.recheckReusedBaseline(
+      JSON.parse(JSON.stringify(state)) as Record<string, unknown>,
+      stored,
+      1000,
+    );
+    expect(why).toBeUndefined();
+    expect(r2.serve.requests.length).toBeGreaterThan(0);
+    for (const q of r2.serve.requests) expect(q.body.testIsolation).toBe("required");
+  });
+
+  test("--isolate-tests with bc is refused by name, with the plan's text", async () => {
+    await expect(rig({ extra: { ...BC, isolateTests: true } })).rejects.toThrow(
+      'al-runner-v3-isolate-tests-with-bc-refused: --isolate-tests runs every test alone, while "alRunnerV3.isolation" is "bc", which runs each codeunit\'s tests together as Business Central does; the two cannot both hold.',
+    );
+  });
+
+  test("one warning per session names the mode (decideTransport), none under auto or test", async () => {
+    const seen: [string, string][] = [];
+    const r = await rig({ extra: BC, notify: (c, m) => seen.push([c, m]) });
+    await r.b.decideTransport({ resume: false });
+    await r.b.decideTransport({ resume: false }).catch(() => {});
+    const bc = seen.filter(([c]) => c === "al-runner-v3-isolation-bc");
+    expect(bc).toHaveLength(1);
+    expect(bc[0]?.[1]).toContain(WARNING);
+    for (const iso of ["auto", "test"] as const) {
+      const other: [string, string][] = [];
+      const o = await rig({ extra: { isolation: iso }, notify: (c, m) => other.push([c, m]) });
+      await o.b.decideTransport({ resume: false });
+      expect(other.map(([c]) => c)).not.toContain("al-runner-v3-isolation-bc");
+    }
+  });
+});

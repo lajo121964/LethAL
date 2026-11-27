@@ -13,7 +13,7 @@
  *     "secondEcho": true,                                      // R635 §5, serve-entries only
  *     "downloadDemoData": true,                                // R885; false passes --no-download (offline, gates); true: the feed's copy replaces an older Microsoft app in .alpackages
  *     "noClient": false,                                       // R907; true passes --no-client: tests run as a session without a client (GuiAllowed() false, as on BC's web-service path); a pass that rests on an unprobed assumption is flagged
- *     "isolation": "auto",                                    // R896; "auto" (default): per codeunit, "method" where the baseline passes strictly more tests so; R890: "test" or "method" force one mode
+ *     "isolation": "auto",                                    // R896; "auto" (default): per codeunit, "method" where the baseline passes strictly more tests so; R890: "test" or "method" force one mode; "bc": each codeunit under the isolation Business Central's runner would use (testIsolation "required")
  *     "memoryHeadroomGb": 4,                                  // R948; no new test call starts while the container uses more than its cgroup limit less this many GiB; the run then stops with its report. 0 = guard off
  *     "daemonMaxRssGb": 6,                                    // R952 (R948); a serve daemon whose RSS passed this many GiB is replaced by a fresh one before its next request. 0 = off
  *     "daemonMaxRequests": 0,                                 // R952 (R948); a serve daemon is replaced after this many requests. 0 (default) = off
@@ -66,9 +66,12 @@ export interface AlRunnerV3ConfigSection {
    * R890: `"test"`: one codeunit per call, rollback per test, globals kept. `"method"`: every test
    * alone, codeunit isolation, a fresh codeunit per test (as BC's runner). R896: `"auto"` (the
    * default, `V3_ISOLATION_DEFAULT`): `"test"`, except a codeunit whose baseline passes strictly
-   * more tests under `"method"`, chosen once per session.
+   * more tests under `"method"`, chosen once per session. `"bc"`: each test codeunit runs as one
+   * grouped call under the isolation Business Central's test runner would give it (serve requests
+   * send `testIsolation: "required"`, one-shot `--isolation required`; entries as under `"test"`).
+   * A codeunit that fails grouped is a baseline failure, never moved to `"method"`.
    */
-  readonly isolation: "auto" | "test" | "method";
+  readonly isolation: "auto" | "test" | "method" | "bc";
   /** R938: `--environment` for every al-runner call. Absent: the target's launch.json decides, else no flag. */
   readonly environment?: "saas" | "onprem";
   /** R956: a `.bclicense` file, absolute, passed as `--license <path>` on every al-runner call that runs tests. Absent: none. */
@@ -297,10 +300,11 @@ export function validateAlRunnerV3Config(
     r.isolation !== undefined &&
     r.isolation !== "auto" &&
     r.isolation !== "test" &&
-    r.isolation !== "method"
+    r.isolation !== "method" &&
+    r.isolation !== "bc"
   ) {
     throw new Error(
-      `al-runner-v3-config-refused: "alRunnerV3.isolation" must be "auto", "test" or "method", got ${JSON.stringify(r.isolation)} (R890, R896).`,
+      `al-runner-v3-config-refused: "alRunnerV3.isolation" must be "auto", "test", "method" or "bc", got ${JSON.stringify(r.isolation)} (R890, R896).`,
     );
   }
   if (r.environment !== undefined && r.environment !== "saas" && r.environment !== "onprem") {
@@ -453,7 +457,8 @@ export function validateAlRunnerV3Config(
     ...(typeof r.alcPath === "string" ? { alcPath: r.alcPath } : {}),
     ...(typeof r.cacheDir === "string" ? { cacheDir: r.cacheDir } : {}),
     ...(r.dotnetSidecar !== undefined ? { dotnetSidecar: r.dotnetSidecar as string | false } : {}),
-    isolation: (r.isolation as "auto" | "test" | "method" | undefined) ?? V3_ISOLATION_DEFAULT,
+    isolation:
+      (r.isolation as "auto" | "test" | "method" | "bc" | undefined) ?? V3_ISOLATION_DEFAULT,
     ...(r.environment !== undefined ? { environment: r.environment as "saas" | "onprem" } : {}),
     ...(typeof r.license === "string" ? { license: resolve(r.license) } : {}),
     ...(typeof r.companies === "string" ? { companies: r.companies } : {}), // PR-282

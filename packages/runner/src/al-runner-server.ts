@@ -194,9 +194,10 @@ export interface ServerRunRequest {
    * `"test"` is what the CLI path's `--isolation test` means, and `capabilities().isolation`
    * claims `full-reset` on the strength of it. The server's OWN default is `"codeunit"`, which is
    * the weaker isolation [[R96]] records the v1 argv as having silently bought, so this is always
-   * sent explicitly rather than left to the server's default.
+   * sent explicitly rather than left to the server's default. `"required"` (AL Runner `a8421f2` and
+   * later): each test codeunit under its own `RequiredTestIsolation`, as Business Central's test runner.
    */
-  readonly testIsolation?: "test" | "codeunit" | "disabled";
+  readonly testIsolation?: "test" | "codeunit" | "disabled" | "required";
 }
 
 type ReadLineOutcome =

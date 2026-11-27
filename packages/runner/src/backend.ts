@@ -722,6 +722,12 @@ export interface ExecutionBackend {
    */
   readonly methodIsolation?: boolean;
   /**
+   * `alRunnerV3.isolation: "bc"`: each test codeunit runs grouped under the isolation Business Central's
+   * runner gives it (`testIsolation: "required"`). Absent counts as false. In `runner_build`
+   * (` isolation-bc`) and the fingerprint, so a "bc" run neither lends to nor borrows from a "test" run.
+   */
+  readonly bcIsolation?: boolean;
+  /**
    * R896: `alRunnerV3.isolation: "auto"`: the baseline chooses each test codeunit's mode
    * (`chooseIsolation`). Absent counts as false. In `runner_build` (` isolation-auto`) and the
    * fingerprint; such a run neither lends nor borrows history or a baseline snapshot.
